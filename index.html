@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Voice Agent</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 1rem; }
+        #status { font-weight: bold; color: #666; margin-bottom: 1rem; }
+        #transcripts { 
+            border: 1px solid #ddd; height: 300px; overflow-y: auto; 
+            padding: 1rem; background: #f9f9f9; margin-top: 1rem; 
+        }
+        .entry { border-bottom: 1px solid #eee; padding: 5px 0; }
+        button { padding: 10px 20px; font-size: 1rem; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>⚡ WebSocket Parallel Agent</h1>
+    <div id="status">Ready to connect...</div>
+    <button id="connectBtn">Start Streaming</button>
+    
+    <h3>Transcripts</h3>
+    <div id="transcripts"></div>
+
+    <script>
+        const SAMPLE_RATE = 16000; // Whisper requirement
+        const SERVER_URL = "wss://nipping-transnormal-kyndall.ngrok-free.dev";
+        
+        const statusDiv = document.getElementById('status');
+        const transcriptDiv = document.getElementById('transcripts');
+        const connectBtn = document.getElementById('connectBtn');
+        
+        let socket;
+        let audioContext;
+        let processor;
+        let input;
+
+        connectBtn.onclick = async () => {
+            connectBtn.disabled = true;
+            statusDiv.innerText = "Connecting...";
+
+            try {
+                // 1. Connect to WebSocket
+                socket = new WebSocket(SERVER_URL);
+                
+                socket.onopen = async () => {
+                    statusDiv.innerText = "Connected! Listening...";
+                    await startAudio();
+                };
+
+                // 2. Receive Text Parallelly
+                // This will trigger whenever the backend sends text, 
+                // even if we are currently speaking (sending audio).
+                socket.onmessage = (event) => {
+                    const text = event.data;
+                    const p = document.createElement('div');
+                    p.className = 'entry';
+                    p.innerText = text;
+                    transcriptDiv.appendChild(p);
+                    transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+                };
+
+                socket.onclose = () => {
+                    statusDiv.innerText = "Disconnected.";
+                    connectBtn.disabled = false;
+                    stopAudio();
+                };
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "Error: " + error.message;
+            }
+        };
+
+        async function startAudio() {
+            // Force 16kHz Sample Rate
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: SAMPLE_RATE 
+            });
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            input = audioContext.createMediaStreamSource(stream);
+
+            // Buffer Size 4096 = approx 0.25s latency chunk
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                if (socket.readyState === WebSocket.OPEN) {
+                    // Get raw Float32 data and send immediately
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    socket.send(inputData.buffer);
+                }
+            };
+
+            input.connect(processor);
+            processor.connect(audioContext.destination);
+        }
+
+        function stopAudio() {
+            if (processor) processor.disconnect();
+            if (input) input.disconnect();
+            if (audioContext) audioContext.close();
+        }
+    </script>
+</body>
+</html>
