@@ -1,0 +1,4 @@
+websockets
+faster-whisper
+numpy
+python-dotenv
